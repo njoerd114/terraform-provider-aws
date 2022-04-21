@@ -181,6 +181,7 @@ func ResourceCluster() *schema.Resource {
 					"parallelquery",
 					"provisioned",
 					"serverless",
+					"serverlessv2",
 				}, false),
 			},
 
@@ -231,6 +232,27 @@ func ResourceCluster() *schema.Resource {
 								"ForceApplyCapacityChange",
 								"RollbackCapacityChange",
 							}, false),
+						},
+					},
+				},
+			},
+
+			"v2_scaling_configuration": {
+				Type:             schema.TypeList,
+				Optional:         true,
+				MaxItems:         1,
+				DiffSuppressFunc: verify.SuppressMissingOptionalConfigurationBlock,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"max_capacity": {
+							Type:     schema.TypeInt,
+							Optional: true,
+							Default:  clusterScalingConfiguration_DefaultMaxCapacity,
+						},
+						"min_capacity": {
+							Type:     schema.TypeInt,
+							Optional: true,
+							Default:  clusterScalingConfiguration_DefaultMinCapacity,
 						},
 					},
 				},

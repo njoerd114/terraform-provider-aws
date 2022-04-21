@@ -27,6 +27,7 @@ func init() {
 func testAccErrorCheckSkipRDS(t *testing.T) resource.ErrorCheckFunc {
 	return acctest.ErrorCheckSkipMessagesContaining(t,
 		"engine mode serverless you requested is currently unavailable",
+		"engine mode serverlessv2 you requests is currently unavailable",
 		"engine mode multimaster you requested is currently unavailable",
 		"requested engine version was not found or does not support parallelquery functionality",
 		"Backtrack is not enabled for the aurora engine",
@@ -970,7 +971,7 @@ func TestAccRDSCluster_engineMode(t *testing.T) {
 		t.Skip("skipping long-running test in short mode")
 	}
 
-	var dbCluster1, dbCluster2 rds.DBCluster
+	var dbCluster1, dbCluster2, dbCluster3 rds.DBCluster
 
 	rName := sdkacctest.RandomWithPrefix(acctest.ResourcePrefix)
 	resourceName := "aws_rds_cluster.test"
@@ -987,6 +988,7 @@ func TestAccRDSCluster_engineMode(t *testing.T) {
 					testAccCheckClusterExists(resourceName, &dbCluster1),
 					resource.TestCheckResourceAttr(resourceName, "engine_mode", "serverless"),
 					resource.TestCheckResourceAttr(resourceName, "scaling_configuration.#", "1"),
+					resource.TestCheckResourceAttr(resourceName, "v2_scaling_configuration.#", "0"),
 				),
 			},
 			{
@@ -996,6 +998,17 @@ func TestAccRDSCluster_engineMode(t *testing.T) {
 					testAccCheckClusterRecreated(&dbCluster1, &dbCluster2),
 					resource.TestCheckResourceAttr(resourceName, "engine_mode", "provisioned"),
 					resource.TestCheckResourceAttr(resourceName, "scaling_configuration.#", "0"),
+					resource.TestCheckResourceAttr(resourceName, "v2_scaling_configuration.#", "0"),
+				),
+			},
+			{
+				Config: testAccClusterConfig_EngineMode(rName, "serverlessv2"),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckClusterExists(resourceName, &dbCluster3),
+					testAccCheckClusterRecreated(&dbCluster2, &dbCluster3),
+					resource.TestCheckResourceAttr(resourceName, "engine_mode", "servlessv2"),
+					resource.TestCheckResourceAttr(resourceName, "scaling_configuration.#", "0"),
+					resource.TestCheckResourceAttr(resourceName, "v2_scaling_configuration.#", "1"),
 				),
 			},
 		},
@@ -1457,6 +1470,44 @@ func TestAccRDSCluster_scaling(t *testing.T) {
 	})
 }
 
+func TestAccRDSCluster_scalingv2(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping long-running test in short mode")
+	}
+
+	var dbCluster rds.DBCluster
+
+	rName := sdkacctest.RandomWithPrefix(acctest.ResourcePrefix)
+	resourceName := "aws_rds_cluster.test"
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { acctest.PreCheck(t) },
+		ErrorCheck:   acctest.ErrorCheck(t, rds.EndpointsID),
+		Providers:    acctest.Providers,
+		CheckDestroy: testAccCheckClusterDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccClusterConfig_v2_ScalingConfiguration(rName, 64.0, 0.5),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckClusterExists(resourceName, &dbCluster),
+					resource.TestCheckResourceAttr(resourceName, "v2_scaling_configuration.#", "1"),
+					resource.TestCheckResourceAttr(resourceName, "v2_scaling_configuration.0.max_capacity", "64"),
+					resource.TestCheckResourceAttr(resourceName, "v2_scaling_configuration.0.min_capacity", "0.5"),
+				),
+			},
+			{
+				Config: testAccClusterConfig_v2_ScalingConfiguration(rName, 128.0, 8.5),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckClusterExists(resourceName, &dbCluster),
+					resource.TestCheckResourceAttr(resourceName, "v2_scaling_configuration.#", "1"),
+					resource.TestCheckResourceAttr(resourceName, "scaling_configuration.0.max_capacity", "128"),
+					resource.TestCheckResourceAttr(resourceName, "scaling_configuration.0.min_capacity", "8"),
+				),
+			},
+		},
+	})
+}
+
 // Reference: https://github.com/hashicorp/terraform-provider-aws/issues/11698
 func TestAccRDSCluster_Scaling_defaultMinCapacity(t *testing.T) {
 	var dbCluster rds.DBCluster
@@ -1480,6 +1531,31 @@ func TestAccRDSCluster_Scaling_defaultMinCapacity(t *testing.T) {
 					resource.TestCheckResourceAttr(resourceName, "scaling_configuration.0.min_capacity", "1"),
 					resource.TestCheckResourceAttr(resourceName, "scaling_configuration.0.seconds_until_auto_pause", "301"),
 					resource.TestCheckResourceAttr(resourceName, "scaling_configuration.0.timeout_action", "RollbackCapacityChange"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccRDSCluster_v2_Scaling_defaultMinCapacity(t *testing.T) {
+	var dbCluster rds.DBCluster
+
+	rName := sdkacctest.RandomWithPrefix(acctest.ResourcePrefix)
+	resourceName := "aws_rds_cluster.test"
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { acctest.PreCheck(t) },
+		ErrorCheck:   acctest.ErrorCheck(t, rds.EndpointsID),
+		Providers:    acctest.Providers,
+		CheckDestroy: testAccCheckClusterDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccClusterConfig_v2_ScalingConfiguration_DefaultMinCapacity(rName, 128.0),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckClusterExists(resourceName, &dbCluster),
+					resource.TestCheckResourceAttr(resourceName, "v2_scaling_configuration.#", "1"),
+					resource.TestCheckResourceAttr(resourceName, "scaling_configuration.0.max_capacity", "128.0"),
+					resource.TestCheckResourceAttr(resourceName, "scaling_configuration.0.min_capacity", "1.0"),
 				),
 			},
 		},
@@ -1649,6 +1725,38 @@ func TestAccRDSCluster_SnapshotIdentifierEngineMode_serverless(t *testing.T) {
 					testAccCheckDbClusterSnapshotExists(snapshotResourceName, &dbClusterSnapshot),
 					testAccCheckClusterExists(resourceName, &dbCluster),
 					resource.TestCheckResourceAttr(resourceName, "engine_mode", "serverless"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccRDSCluster_SnapshotIdentifierEngineMode_serverlessv2(t *testing.T) {
+	// The below is according to AWS Support. This test can be updated in the future
+	// to initialize some data.
+	t.Skip("serverlessv2 does not support snapshot restore on an empty volume")
+
+	var dbCluster, sourceDbCluster rds.DBCluster
+	var dbClusterSnapshot rds.DBClusterSnapshot
+
+	rName := sdkacctest.RandomWithPrefix(acctest.ResourcePrefix)
+	sourceDbResourceName := "aws_rds_cluster.source"
+	snapshotResourceName := "aws_db_cluster_snapshot.test"
+	resourceName := "aws_rds_cluster.test"
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { acctest.PreCheck(t) },
+		ErrorCheck:   acctest.ErrorCheck(t, rds.EndpointsID),
+		Providers:    acctest.Providers,
+		CheckDestroy: testAccCheckInstanceDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccClusterConfig_SnapshotIdentifier_EngineMode(rName, "serverlessv2"),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckClusterExists(sourceDbResourceName, &sourceDbCluster),
+					testAccCheckDbClusterSnapshotExists(snapshotResourceName, &dbClusterSnapshot),
+					testAccCheckClusterExists(resourceName, &dbCluster),
+					resource.TestCheckResourceAttr(resourceName, "engine_mode", "serverlessv2"),
 				),
 			},
 		},
@@ -2038,14 +2146,28 @@ func TestAccRDSCluster_enableHTTPEndpoint(t *testing.T) {
 		CheckDestroy: testAccCheckClusterDestroy,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccClusterConfig_EnableHTTPEndpoint(rName, true),
+				Config: testAccClusterConfig_EnableHTTPEndpoint(rName, "serverless", true),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckClusterExists(resourceName, &dbCluster),
 					resource.TestCheckResourceAttr(resourceName, "enable_http_endpoint", "true"),
 				),
 			},
 			{
-				Config: testAccClusterConfig_EnableHTTPEndpoint(rName, false),
+				Config: testAccClusterConfig_EnableHTTPEndpoint(rName, "serverless", false),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckClusterExists(resourceName, &dbCluster),
+					resource.TestCheckResourceAttr(resourceName, "enable_http_endpoint", "false"),
+				),
+			},
+			{
+				Config: testAccClusterConfig_EnableHTTPEndpoint(rName, "serverlessv2", true),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckClusterExists(resourceName, &dbCluster),
+					resource.TestCheckResourceAttr(resourceName, "enable_http_endpoint", "true"),
+				),
+			},
+			{
+				Config: testAccClusterConfig_EnableHTTPEndpoint(rName, "serverlessv2", false),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckClusterExists(resourceName, &dbCluster),
 					resource.TestCheckResourceAttr(resourceName, "enable_http_endpoint", "false"),
@@ -3797,6 +3919,23 @@ resource "aws_rds_cluster" "test" {
 `, rName, autoPause, maxCapacity, minCapacity, secondsUntilAutoPause, timeoutAction)
 }
 
+func testAccClusterConfig_v2_ScalingConfiguration(rName string, maxCapacity interface{}, minCapacity interface{}) string {
+	return fmt.Sprintf(`
+resource "aws_rds_cluster" "test" {
+  cluster_identifier  = %q
+  engine_mode         = "serverlessv2"
+  master_password     = "barbarbarbar"
+  master_username     = "foo"
+  skip_final_snapshot = true
+
+  v2_scaling_configuration {
+    max_capacity             = %d
+    min_capacity             = %d
+  }
+}
+`, rName, maxCapacity, minCapacity)
+}
+
 func testAccClusterConfig_ScalingConfiguration_DefaultMinCapacity(rName string, autoPause bool, maxCapacity, secondsUntilAutoPause int, timeoutAction string) string {
 	return fmt.Sprintf(`
 resource "aws_rds_cluster" "test" {
@@ -3814,6 +3953,22 @@ resource "aws_rds_cluster" "test" {
   }
 }
 `, rName, autoPause, maxCapacity, secondsUntilAutoPause, timeoutAction)
+}
+
+func testAccClusterConfig_v2_ScalingConfiguration_DefaultMinCapacity(rName string, maxCapacity interface{}) string {
+	return fmt.Sprintf(`
+resource "aws_rds_cluster" "test" {
+  cluster_identifier  = %q
+  engine_mode         = "serverlessv2"
+  master_password     = "barbarbarbar"
+  master_username     = "foo"
+  skip_final_snapshot = true
+
+  v2_scaling_configuration {
+    max_capacity             = %d
+  }
+}
+`, rName, maxCapacity)
 }
 
 func testAccClusterConfig_SnapshotIdentifier(rName string) string {
@@ -4176,11 +4331,11 @@ resource "aws_rds_cluster" "test" {
 `, n, f)
 }
 
-func testAccClusterConfig_EnableHTTPEndpoint(rName string, enableHttpEndpoint bool) string {
+func testAccClusterConfig_EnableHTTPEndpoint(rName string, engineMode string, enableHttpEndpoint bool) string {
 	return fmt.Sprintf(`
 resource "aws_rds_cluster" "test" {
   cluster_identifier   = %q
-  engine_mode          = "serverless"
+  engine_mode          = %q
   master_password      = "barbarbarbar"
   master_username      = "foo"
   skip_final_snapshot  = true
@@ -4194,5 +4349,5 @@ resource "aws_rds_cluster" "test" {
     timeout_action           = "RollbackCapacityChange"
   }
 }
-`, rName, enableHttpEndpoint)
+`, rName, engineMode, enableHttpEndpoint)
 }
